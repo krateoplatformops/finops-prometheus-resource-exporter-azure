@@ -37,4 +37,6 @@ COPY --from=builder /bin/prometheus-resource-exporter-azure /bin/prometheus-reso
 
 USER nonroot:nonroot
 
+WORKDIR /temp
+
 ENTRYPOINT ["/bin/prometheus-resource-exporter-azure"]
