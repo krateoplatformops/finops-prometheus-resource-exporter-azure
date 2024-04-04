@@ -6,5 +6,5 @@ build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o ./bin/prometheus-resource-exporter-azure main.go
 
 container:
-	docker build -t $(REPO)prometheus-resource-exporter-azure:$(VERSION) .
-	docker push $(REPO)prometheus-resource-exporter-azure:$(VERSION)
+	docker build -t $(REPO)finops-prometheus-resource-exporter-azure:$(VERSION) .
+	docker push $(REPO)finops-prometheus-resource-exporter-azure:$(VERSION)
