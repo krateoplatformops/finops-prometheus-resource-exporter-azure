@@ -15,7 +15,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/krateoplatformops/finops-operator-exporter v0.0.0-20240404134834-ec37d43733fa // indirect
+	github.com/krateoplatformops/finops-operator-exporter v0.0.0-20240404134834-ec37d43733fa
 	github.com/matttproud/golang_protobuf_extensions/v2 v2.0.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
