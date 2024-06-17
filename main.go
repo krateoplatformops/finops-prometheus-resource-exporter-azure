@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/pkg/config"
+	configMetrics "github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/pkg/config"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -41,7 +41,7 @@ func ParseConfigFile(file string) (operatorPackage.ExporterScraperConfig, error)
 	}
 	defer fileReader.Close()
 	data, err := io.ReadAll(fileReader)
-	fmt.Println(string(data))
+
 	if err != nil {
 		return operatorPackage.ExporterScraperConfig{}, err
 	}
@@ -93,11 +93,18 @@ func makeAPIRequest(config operatorPackage.ExporterScraperConfig) string {
 	if config.Spec.ExporterConfig.RequireAuthentication {
 		switch config.Spec.ExporterConfig.AuthenticationMethod {
 		case "bearer-token":
-			request.Header.Set("Authorization", config.Spec.ExporterConfig.AdditionalVariables["authenticationToken"])
+			request.Header.Set("Authorization", "Bearer "+config.Spec.ExporterConfig.AdditionalVariables["authenticationToken"])
+		case "cert-file":
+			data, err := os.ReadFile(config.Spec.ExporterConfig.AdditionalVariables["certFilePath"])
+			if err != nil {
+				fmt.Println("There has been an error reading the cert-file")
+				return ""
+			}
+			request.Header.Set("Authorization", "Bearer "+string(data))
 		}
 	}
 
-	res, err := http.Get(requestURL)
+	res, err := http.DefaultClient.Do(request)
 	fatal(err)
 
 	defer res.Body.Close()
@@ -116,12 +123,12 @@ func makeAPIRequest(config operatorPackage.ExporterScraperConfig) string {
 * @param fileName the name of the metrics file
 * @return csv file as a 2D array of strings
  */
-func getRecordsFromFile(fileName string) [][]string {
+func getRecordsFromFile(fileName string, config operatorPackage.ExporterScraperConfig) [][]string {
 
 	byteData, err := os.ReadFile(fmt.Sprintf("/temp/%s.dat", fileName))
 	fatal(err)
 
-	data := config.Metrics{}
+	data := configMetrics.Metrics{}
 	err = json.Unmarshal(byteData, &data)
 	fatal(err)
 
@@ -129,7 +136,7 @@ func getRecordsFromFile(fileName string) [][]string {
 	for _, value := range data.Value {
 		for _, timeseries := range value.Timeseries {
 			for _, metric := range timeseries.Data {
-				stringCSV += value.Id + "," + value.Name.Value + "," + metric.Timestamp.Format(time.RFC3339) + "," + metric.Average.AsDec().String() + "\n"
+				stringCSV += config.Spec.ExporterConfig.AdditionalVariables["ResourceId"] + "," + value.Name.Value + "," + metric.Timestamp.Format(time.RFC3339) + "," + metric.Average.AsDec().String() + "\n"
 			}
 		}
 	}
@@ -156,7 +163,7 @@ func updatedMetrics(config operatorPackage.ExporterScraperConfig, useConfig bool
 		if useConfig {
 			fileName = makeAPIRequest(config)
 		}
-		records := getRecordsFromFile(fileName)
+		records := getRecordsFromFile(fileName, config)
 
 		notFound := true
 		for i, record := range records {
@@ -209,7 +216,6 @@ func main() {
 	}
 
 	registry := prometheus.NewRegistry()
-
 	go updatedMetrics(config, useConfig, registry, []recordGaugeCombo{})
 
 	handler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
