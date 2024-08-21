@@ -112,10 +112,10 @@ func makeAPIRequest(config operatorPackage.ExporterScraperConfig) string {
 	data, err := io.ReadAll(res.Body)
 	fatal(err)
 
-	err = os.WriteFile(fmt.Sprintf("/temp/%s.dat", config.Spec.ExporterConfig.Name), trapBOM(data), 0644)
+	err = os.WriteFile(fmt.Sprintf("/temp/%s.dat", config.Spec.ExporterConfig.Provider.Name), trapBOM(data), 0644)
 	fatal(err)
 
-	return config.Spec.ExporterConfig.Name
+	return config.Spec.ExporterConfig.Provider.Name
 }
 
 /*
@@ -159,7 +159,7 @@ func getRecordsFromFile(fileName string, config operatorPackage.ExporterScraperC
  */
 func updatedMetrics(config operatorPackage.ExporterScraperConfig, useConfig bool, registry *prometheus.Registry, prometheusMetrics []recordGaugeCombo) {
 	for {
-		fileName := config.Spec.ExporterConfig.Name
+		fileName := config.Spec.ExporterConfig.Provider.Name
 		if useConfig {
 			fileName = makeAPIRequest(config)
 		}
@@ -187,7 +187,7 @@ func updatedMetrics(config operatorPackage.ExporterScraperConfig, useConfig bool
 					labels[records[0][j]] = value
 				}
 				newMetricsRow := promauto.NewGauge(prometheus.GaugeOpts{
-					Name:        fmt.Sprintf("usage_%s_%d", strings.ReplaceAll(config.Spec.ExporterConfig.Name, "-", "_"), i),
+					Name:        fmt.Sprintf("usage_%s_%d", strings.ReplaceAll(config.Spec.ExporterConfig.Provider.Name, "-", "_"), i),
 					ConstLabels: labels,
 				})
 				metricValue, err := strconv.ParseFloat(records[i][3], 64)
@@ -211,7 +211,7 @@ func main() {
 		fatal(err)
 	} else {
 		useConfig = false
-		config.Spec.ExporterConfig.Name = os.Args[1]
+		config.Spec.ExporterConfig.Provider.Name = os.Args[1]
 		config.Spec.ExporterConfig.PollingIntervalHours = 1
 	}
 
