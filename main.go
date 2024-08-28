@@ -21,7 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gopkg.in/yaml.v3"
 
-	operatorPackage "github.com/krateoplatformops/finops-operator-exporter/api/v1"
+	finopsDataTypes "github.com/krateoplatformops/finops-data-types/api/v1"
 )
 
 type recordGaugeCombo struct {
@@ -34,23 +34,23 @@ type recordGaugeCombo struct {
 * The configuration struct is an array of TargetAPI structs to allow the user to define multiple end-points for exporting.
 * @param file The path to the configuration file
  */
-func ParseConfigFile(file string) (operatorPackage.ExporterScraperConfig, error) {
+func ParseConfigFile(file string) (finopsDataTypes.ExporterScraperConfig, error) {
 	fileReader, err := os.OpenFile(file, os.O_RDONLY, 0600)
 	if err != nil {
-		return operatorPackage.ExporterScraperConfig{}, err
+		return finopsDataTypes.ExporterScraperConfig{}, err
 	}
 	defer fileReader.Close()
 	data, err := io.ReadAll(fileReader)
 
 	if err != nil {
-		return operatorPackage.ExporterScraperConfig{}, err
+		return finopsDataTypes.ExporterScraperConfig{}, err
 	}
 
-	parse := operatorPackage.ExporterScraperConfig{}
+	parse := finopsDataTypes.ExporterScraperConfig{}
 
 	err = yaml.Unmarshal(data, &parse)
 	if err != nil {
-		return operatorPackage.ExporterScraperConfig{}, err
+		return finopsDataTypes.ExporterScraperConfig{}, err
 	}
 
 	regex, _ := regexp.Compile("<.*?>")
@@ -85,7 +85,7 @@ func trapBOM(file []byte) []byte {
 * @param targetAPI the configuration for the API request
 * @return the name of the saved file
  */
-func makeAPIRequest(config operatorPackage.ExporterScraperConfig) string {
+func makeAPIRequest(config finopsDataTypes.ExporterScraperConfig) string {
 	requestURL := fmt.Sprintf(config.Spec.ExporterConfig.Url)
 	request, err := http.NewRequest(http.MethodGet, requestURL, nil)
 	fatal(err)
@@ -123,7 +123,7 @@ func makeAPIRequest(config operatorPackage.ExporterScraperConfig) string {
 * @param fileName the name of the metrics file
 * @return csv file as a 2D array of strings
  */
-func getRecordsFromFile(fileName string, config operatorPackage.ExporterScraperConfig) [][]string {
+func getRecordsFromFile(fileName string, config finopsDataTypes.ExporterScraperConfig) [][]string {
 
 	byteData, err := os.ReadFile(fmt.Sprintf("/temp/%s.dat", fileName))
 	fatal(err)
@@ -157,7 +157,7 @@ func getRecordsFromFile(fileName string, config operatorPackage.ExporterScraperC
 * @param registry the prometheus registry to add the gauges to
 * @param prometheusMetrics the array of structs that contain gauges and the record the gauge was created from (to check when there are new records if it has already been created)
  */
-func updatedMetrics(config operatorPackage.ExporterScraperConfig, useConfig bool, registry *prometheus.Registry, prometheusMetrics []recordGaugeCombo) {
+func updatedMetrics(config finopsDataTypes.ExporterScraperConfig, useConfig bool, registry *prometheus.Registry, prometheusMetrics []recordGaugeCombo) {
 	for {
 		fileName := config.Spec.ExporterConfig.Provider.Name
 		if useConfig {
@@ -204,7 +204,7 @@ func updatedMetrics(config operatorPackage.ExporterScraperConfig, useConfig bool
 
 func main() {
 	var err error
-	config := operatorPackage.ExporterScraperConfig{}
+	config := finopsDataTypes.ExporterScraperConfig{}
 	useConfig := true
 	if len(os.Args) <= 1 {
 		config, err = ParseConfigFile("/config/config.yaml")
