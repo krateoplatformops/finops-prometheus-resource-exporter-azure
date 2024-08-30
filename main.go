@@ -15,6 +15,7 @@ import (
 	"time"
 
 	configMetrics "github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/pkg/config"
+	"github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/pkg/utils"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -93,7 +94,11 @@ func makeAPIRequest(config finopsDataTypes.ExporterScraperConfig) string {
 	if config.Spec.ExporterConfig.RequireAuthentication {
 		switch config.Spec.ExporterConfig.AuthenticationMethod {
 		case "bearer-token":
-			request.Header.Set("Authorization", "Bearer "+config.Spec.ExporterConfig.AdditionalVariables["authenticationToken"])
+			token, err := utils.GetBearerTokenSecret(config)
+			if err != nil {
+				fatal(err)
+			}
+			request.Header.Set("Authorization", "Bearer "+token)
 		case "cert-file":
 			data, err := os.ReadFile(config.Spec.ExporterConfig.AdditionalVariables["certFilePath"])
 			if err != nil {
@@ -130,7 +135,14 @@ func getRecordsFromFile(fileName string, config finopsDataTypes.ExporterScraperC
 
 	data := configMetrics.Metrics{}
 	err = json.Unmarshal(byteData, &data)
-	fatal(err)
+	if err != nil {
+		log.Printf("error decoding response: %v", err)
+		if e, ok := err.(*json.SyntaxError); ok {
+			log.Printf("syntax error at byte offset %d", e.Offset)
+		}
+		log.Printf("response: %q", byteData)
+		fatal(err)
+	}
 
 	stringCSV := "ResourceId,metricName,timestamp,average\n"
 	for _, value := range data.Value {
