@@ -144,11 +144,11 @@ func getRecordsFromFile(fileName string, config finopsDataTypes.ExporterScraperC
 		fatal(err)
 	}
 
-	stringCSV := "ResourceId,metricName,timestamp,average\n"
+	stringCSV := "ResourceId,metricName,timestamp,average,unit\n"
 	for _, value := range data.Value {
 		for _, timeseries := range value.Timeseries {
 			for _, metric := range timeseries.Data {
-				stringCSV += config.Spec.ExporterConfig.AdditionalVariables["ResourceId"] + "," + value.Name.Value + "," + metric.Timestamp.Format(time.RFC3339) + "," + metric.Average.AsDec().String() + "\n"
+				stringCSV += config.Spec.ExporterConfig.AdditionalVariables["ResourceId"] + "," + value.Name.Value + "," + metric.Timestamp.Format(time.RFC3339) + "," + metric.Average.AsDec().String() + "," + value.Unit + "\n"
 			}
 		}
 	}

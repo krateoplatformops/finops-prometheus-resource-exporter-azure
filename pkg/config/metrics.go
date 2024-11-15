@@ -12,6 +12,7 @@ type Metrics struct {
 type Value struct {
 	Id         string       `json:"id"`
 	Name       Name         `json:"name"`
+	Unit       string       `json:"unit"`
 	Timeseries []Timeseries `json:"timeseries"`
 }
 
