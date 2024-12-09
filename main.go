@@ -169,14 +169,13 @@ func getRecordsFromFile(fileName string, config finopsDataTypes.ExporterScraperC
 * @param registry the prometheus registry to add the gauges to
 * @param prometheusMetrics the array of structs that contain gauges and the record the gauge was created from (to check when there are new records if it has already been created)
  */
-func updatedMetrics(config finopsDataTypes.ExporterScraperConfig, useConfig bool, registry *prometheus.Registry, prometheusMetrics []recordGaugeCombo) {
+func updatedMetrics(config finopsDataTypes.ExporterScraperConfig, useConfig bool, registry *prometheus.Registry, prometheusMetrics map[string]recordGaugeCombo) {
 	for {
 		fileName := config.Spec.ExporterConfig.Provider.Name
 		if useConfig {
 			fileName = makeAPIRequest(config)
 		}
 		records := getRecordsFromFile(fileName, config)
-
 		notFound := true
 		for i, record := range records {
 			// Skip header line
@@ -185,14 +184,13 @@ func updatedMetrics(config finopsDataTypes.ExporterScraperConfig, useConfig bool
 			}
 
 			notFound = true
-			for _, metric := range prometheusMetrics {
-				if strings.Join(metric.record, " ") == strings.Join(record, " ") {
-					metricValue, err := strconv.ParseFloat(record[3], 64)
-					fatal(err)
-					metric.gauge.Set(metricValue)
-					notFound = false
-				}
+			if _, ok := prometheusMetrics[strings.Join(record, " ")]; ok {
+				metricValue, err := strconv.ParseFloat(record[3], 64)
+				fatal(err)
+				prometheusMetrics[strings.Join(record, " ")].gauge.Set(metricValue)
+				notFound = false
 			}
+
 			if notFound {
 				labels := prometheus.Labels{}
 				for j, value := range record {
@@ -206,7 +204,7 @@ func updatedMetrics(config finopsDataTypes.ExporterScraperConfig, useConfig bool
 				fatal(err)
 
 				newMetricsRow.Set(metricValue)
-				prometheusMetrics = append(prometheusMetrics, recordGaugeCombo{record: record, gauge: newMetricsRow})
+				prometheusMetrics[strings.Join(record, " ")] = recordGaugeCombo{record: record, gauge: newMetricsRow}
 				registry.MustRegister(newMetricsRow)
 			}
 		}
@@ -228,7 +226,7 @@ func main() {
 	}
 
 	registry := prometheus.NewRegistry()
-	go updatedMetrics(config, useConfig, registry, []recordGaugeCombo{})
+	go updatedMetrics(config, useConfig, registry, map[string]recordGaugeCombo{})
 
 	handler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 
