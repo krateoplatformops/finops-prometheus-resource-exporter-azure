@@ -1,10 +1,8 @@
 package utils
 
 import (
-	"context"
+	"bytes"
 
-	finopsDataTypes "github.com/krateoplatformops/finops-data-types/api/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -26,15 +24,10 @@ func GetClientSet() (*kubernetes.Clientset, error) {
 	return clientset, nil
 }
 
-func GetBearerTokenSecret(config finopsDataTypes.ExporterScraperConfig) (string, error) {
-	clientset, err := GetClientSet()
-	if err != nil {
-		return "", err
-	}
-
-	secret, err := clientset.CoreV1().Secrets(config.Spec.ExporterConfig.BearerToken.Namespace).Get(context.TODO(), config.Spec.ExporterConfig.BearerToken.Name, v1.GetOptions{})
-	if err != nil {
-		return "", err
-	}
-	return string(secret.Data["bearer-token"]), nil
+/*
+* Function to remove the encoding bytes from a file.
+* @param file The file to remove the encoding from.
+ */
+func TrapBOM(file []byte) []byte {
+	return bytes.Trim(file, "\xef\xbb\xbf")
 }

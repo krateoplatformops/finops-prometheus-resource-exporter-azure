@@ -1,12 +1,11 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -14,15 +13,19 @@ import (
 	"strings"
 	"time"
 
-	configMetrics "github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/pkg/config"
-	"github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/pkg/utils"
+	configmetrics "github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/internal/config"
+	"github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/internal/helpers/kube/endpoints"
+	"github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/internal/helpers/kube/httpcall"
+	"github.com/krateoplatformops/finops-prometheus-resource-exporter-azure/internal/utils"
+	"k8s.io/client-go/rest"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rs/zerolog/log"
 	"gopkg.in/yaml.v3"
 
-	finopsDataTypes "github.com/krateoplatformops/finops-data-types/api/v1"
+	finopsdatatypes "github.com/krateoplatformops/finops-data-types/api/v1"
 )
 
 type recordGaugeCombo struct {
@@ -35,27 +38,37 @@ type recordGaugeCombo struct {
 * The configuration struct is an array of TargetAPI structs to allow the user to define multiple end-points for exporting.
 * @param file The path to the configuration file
  */
-func ParseConfigFile(file string) (finopsDataTypes.ExporterScraperConfig, error) {
+func ParseConfigFile(file string) (finopsdatatypes.ExporterScraperConfig, *httpcall.Endpoint, error) {
 	fileReader, err := os.OpenFile(file, os.O_RDONLY, 0600)
 	if err != nil {
-		return finopsDataTypes.ExporterScraperConfig{}, err
+		return finopsdatatypes.ExporterScraperConfig{}, &httpcall.Endpoint{}, err
 	}
 	defer fileReader.Close()
 	data, err := io.ReadAll(fileReader)
 
 	if err != nil {
-		return finopsDataTypes.ExporterScraperConfig{}, err
+		return finopsdatatypes.ExporterScraperConfig{}, &httpcall.Endpoint{}, err
 	}
 
-	parse := finopsDataTypes.ExporterScraperConfig{}
+	parse := finopsdatatypes.ExporterScraperConfig{}
 
 	err = yaml.Unmarshal(data, &parse)
 	if err != nil {
-		return finopsDataTypes.ExporterScraperConfig{}, err
+		return finopsdatatypes.ExporterScraperConfig{}, &httpcall.Endpoint{}, err
 	}
 
 	regex, _ := regexp.Compile("<.*?>")
-	newURL := parse.Spec.ExporterConfig.Url
+	rc, _ := rest.InClusterConfig()
+
+	endpoint, err := endpoints.Resolve(context.Background(), endpoints.ResolveOptions{
+		RESTConfig: rc,
+		API:        &parse.Spec.ExporterConfig.API,
+	})
+	if err != nil {
+		return finopsdatatypes.ExporterScraperConfig{}, &httpcall.Endpoint{}, err
+	}
+
+	newURL := endpoint.ServerURL
 	toReplaceRange := regex.FindStringIndex(newURL)
 	for toReplaceRange != nil {
 		// Use the indexes of the match of the regex to replace the URL with the value of the additional variable from the config file
@@ -68,17 +81,9 @@ func ParseConfigFile(file string) (finopsDataTypes.ExporterScraperConfig, error)
 		newURL = strings.Replace(newURL, newURL[toReplaceRange[0]:toReplaceRange[1]], varToReplace, -1)
 		toReplaceRange = regex.FindStringIndex(newURL)
 	}
-	parse.Spec.ExporterConfig.Url = newURL
+	endpoint.ServerURL = newURL
 
-	return parse, nil
-}
-
-/*
-* Function to remove the encoding bytes from a file.
-* @param file The file to remove the encoding from.
- */
-func trapBOM(file []byte) []byte {
-	return bytes.Trim(file, "\xef\xbb\xbf")
+	return parse, endpoint, nil
 }
 
 /*
@@ -86,41 +91,44 @@ func trapBOM(file []byte) []byte {
 * @param targetAPI the configuration for the API request
 * @return the name of the saved file
  */
-func makeAPIRequest(config finopsDataTypes.ExporterScraperConfig) string {
-	requestURL := fmt.Sprintf(config.Spec.ExporterConfig.Url)
-	request, err := http.NewRequest(http.MethodGet, requestURL, nil)
-	fatal(err)
+func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint, fileName string) {
+	log.Logger.Info().Msgf("Request URL: %s", endpoint.ServerURL)
 
-	if config.Spec.ExporterConfig.RequireAuthentication {
-		switch config.Spec.ExporterConfig.AuthenticationMethod {
-		case "bearer-token":
-			token, err := utils.GetBearerTokenSecret(config)
-			if err != nil {
-				fatal(err)
-			}
-			request.Header.Set("Authorization", "Bearer "+token)
-		case "cert-file":
-			data, err := os.ReadFile(config.Spec.ExporterConfig.AdditionalVariables["certFilePath"])
-			if err != nil {
-				fmt.Println("There has been an error reading the cert-file")
-				return ""
-			}
-			request.Header.Set("Authorization", "Bearer "+string(data))
-		}
+	httpClient, err := httpcall.HTTPClientForEndpoint(endpoint)
+	if err != nil {
+		fatal(err)
 	}
 
-	res, err := http.DefaultClient.Do(request)
-	fatal(err)
+	res, err := httpcall.Do(context.TODO(), httpClient, httpcall.Options{
+		API:      &config.Spec.ExporterConfig.API,
+		Endpoint: endpoint,
+	})
+	if err != nil {
+		fatal(err)
+	}
 
 	defer res.Body.Close()
 
+	if res.StatusCode == 202 {
+		res.Body.Close()
+		secondsToSleep, _ := strconv.ParseInt(res.Header.Get("Retry-after"), 10, 64)
+		time.Sleep(time.Duration(secondsToSleep) * time.Second)
+		res, err = http.Get(res.Header.Get("Location"))
+		fatal(err)
+
+		var data map[string]string
+		err = json.NewDecoder(res.Body).Decode(&data)
+		fatal(err)
+		res.Body.Close()
+		res, err = http.Get(data["downloadUrl"])
+		fatal(err)
+	}
 	data, err := io.ReadAll(res.Body)
 	fatal(err)
 
-	err = os.WriteFile(fmt.Sprintf("/temp/%s.dat", config.Spec.ExporterConfig.Provider.Name), trapBOM(data), 0644)
+	err = os.WriteFile(fmt.Sprintf("/temp/%s.dat", fileName), utils.TrapBOM(data), 0644)
 	fatal(err)
 
-	return config.Spec.ExporterConfig.Provider.Name
 }
 
 /*
@@ -128,19 +136,19 @@ func makeAPIRequest(config finopsDataTypes.ExporterScraperConfig) string {
 * @param fileName the name of the metrics file
 * @return csv file as a 2D array of strings
  */
-func getRecordsFromFile(fileName string, config finopsDataTypes.ExporterScraperConfig) [][]string {
+func getRecordsFromFile(fileName string, config finopsdatatypes.ExporterScraperConfig) [][]string {
 
 	byteData, err := os.ReadFile(fmt.Sprintf("/temp/%s.dat", fileName))
 	fatal(err)
 
-	data := configMetrics.Metrics{}
+	data := configmetrics.Metrics{}
 	err = json.Unmarshal(byteData, &data)
 	if err != nil {
-		log.Printf("error decoding response: %v", err)
+		log.Logger.Error().Err(err).Msg("error decoding response")
 		if e, ok := err.(*json.SyntaxError); ok {
-			log.Printf("syntax error at byte offset %d", e.Offset)
+			log.Logger.Error().Msgf("syntax error at byte offset %d", e.Offset)
 		}
-		log.Printf("response: %q", byteData)
+		log.Logger.Info().Msgf("response: %q", byteData)
 		fatal(err)
 	}
 
@@ -169,13 +177,19 @@ func getRecordsFromFile(fileName string, config finopsDataTypes.ExporterScraperC
 * @param registry the prometheus registry to add the gauges to
 * @param prometheusMetrics the array of structs that contain gauges and the record the gauge was created from (to check when there are new records if it has already been created)
  */
-func updatedMetrics(config finopsDataTypes.ExporterScraperConfig, useConfig bool, registry *prometheus.Registry, prometheusMetrics map[string]recordGaugeCombo) {
+func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint, useConfig bool, registry *prometheus.Registry, prometheusMetrics map[string]recordGaugeCombo) {
 	for {
-		fileName := config.Spec.ExporterConfig.Provider.Name
+		fileName := ""
+		if config.Spec.ExporterConfig.Provider.Name != "" {
+			fileName = config.Spec.ExporterConfig.Provider.Name
+		} else {
+			fileName = "download"
+		}
 		if useConfig {
-			fileName = makeAPIRequest(config)
+			makeAPIRequest(config, endpoint, fileName)
 		}
 		records := getRecordsFromFile(fileName, config)
+
 		notFound := true
 		for i, record := range records {
 			// Skip header line
@@ -214,10 +228,11 @@ func updatedMetrics(config finopsDataTypes.ExporterScraperConfig, useConfig bool
 
 func main() {
 	var err error
-	config := finopsDataTypes.ExporterScraperConfig{}
+	config := finopsdatatypes.ExporterScraperConfig{}
+	endpoint := &httpcall.Endpoint{}
 	useConfig := true
 	if len(os.Args) <= 1 {
-		config, err = ParseConfigFile("/config/config.yaml")
+		config, endpoint, err = ParseConfigFile("/config/config.yaml")
 		fatal(err)
 	} else {
 		useConfig = false
@@ -226,7 +241,7 @@ func main() {
 	}
 
 	registry := prometheus.NewRegistry()
-	go updatedMetrics(config, useConfig, registry, map[string]recordGaugeCombo{})
+	go updatedMetrics(config, endpoint, useConfig, registry, map[string]recordGaugeCombo{})
 
 	handler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 
@@ -236,6 +251,6 @@ func main() {
 
 func fatal(err error) {
 	if err != nil {
-		log.Fatalln(err)
+		log.Logger.Warn().Err(err).Msg("an error has occured, continuing...")
 	}
 }
