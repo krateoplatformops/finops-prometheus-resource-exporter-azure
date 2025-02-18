@@ -237,7 +237,13 @@ func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 				registry.MustRegister(newMetricsRow)
 			}
 		}
-		time.Sleep(time.Duration(config.Spec.ExporterConfig.PollingIntervalHours) * time.Hour)
+		sleepFor := config.Spec.ExporterConfig.PollingIntervalHours
+		if sleepFor <= 0 {
+			log.Logger.Info().Msgf("Polling interval is %d, overriding with 5 minutes...", sleepFor)
+			time.Sleep(time.Duration(time.Duration(5) * time.Minute))
+		} else {
+			time.Sleep(time.Duration(time.Duration(sleepFor) * time.Hour))
+		}
 	}
 }
 
