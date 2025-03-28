@@ -34,11 +34,6 @@ type recordGaugeCombo struct {
 	gauge  prometheus.Gauge
 }
 
-/*
-* Parse the given configuration file and unmarhsal it into the "config.Config" data type.
-* The configuration struct is an array of TargetAPI structs to allow the user to define multiple end-points for exporting.
-* @param file The path to the configuration file
- */
 func ParseConfigFile(file string) (finopsdatatypes.ExporterScraperConfig, *httpcall.Endpoint, error) {
 	fileReader, err := os.OpenFile(file, os.O_RDONLY, 0600)
 	if err != nil {
@@ -102,11 +97,6 @@ func ParseConfigFile(file string) (finopsdatatypes.ExporterScraperConfig, *httpc
 	return parse, endpoint, nil
 }
 
-/*
-* This function makes the API request to download the FOCUS csv file according to the given configuration.
-* @param targetAPI the configuration for the API request
-* @return the name of the saved file
- */
 func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint, fileName string) {
 	log.Logger.Info().Msgf("Request URL: %s", endpoint.ServerURL)
 
@@ -119,8 +109,14 @@ func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 		API:      &config.Spec.ExporterConfig.API,
 		Endpoint: endpoint,
 	})
-	if err != nil {
+	for err != nil {
 		fatal(err)
+		log.Logger.Warn().Msgf("Retrying connection in 5s...")
+		time.Sleep(5 * time.Second)
+		res, err = httpcall.Do(context.TODO(), httpClient, httpcall.Options{
+			API:      &config.Spec.ExporterConfig.API,
+			Endpoint: endpoint,
+		})
 	}
 
 	defer res.Body.Close()
@@ -142,16 +138,16 @@ func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 	data, err := io.ReadAll(res.Body)
 	fatal(err)
 
+	if res.StatusCode != 200 {
+		log.Warn().Msgf("Received status code %d", res.StatusCode)
+		log.Debug().Msgf("body: %s", data)
+	}
+
 	err = os.WriteFile(fmt.Sprintf("/temp/%s.dat", fileName), utils.TrapBOM(data), 0644)
 	fatal(err)
 
 }
 
-/*
-* This function reads the given csv file and returns the record list.
-* @param fileName the name of the metrics file
-* @return csv file as a 2D array of strings
- */
 func getRecordsFromFile(fileName string, config finopsdatatypes.ExporterScraperConfig) [][]string {
 
 	byteData, err := os.ReadFile(fmt.Sprintf("/temp/%s.dat", fileName))
@@ -187,12 +183,6 @@ func getRecordsFromFile(fileName string, config finopsdatatypes.ExporterScraperC
 	return records
 }
 
-/*
-* This function creates and maintains the prometheus gauges. Periodically, it updates the records csv file and checks if there are new rows to add to the registry.
-* @param targetAPI the configuration for the API request
-* @param registry the prometheus registry to add the gauges to
-* @param prometheusMetrics the array of structs that contain gauges and the record the gauge was created from (to check when there are new records if it has already been created)
- */
 func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint, useConfig bool, registry *prometheus.Registry, prometheusMetrics map[string]recordGaugeCombo) {
 	for {
 		fileName := ""
@@ -207,6 +197,7 @@ func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 		records := getRecordsFromFile(fileName, config)
 
 		notFound := true
+		log.Info().Msgf("Analyzing %d records...", len(records))
 		for i, record := range records {
 			// Skip header line
 			if i == 0 {
