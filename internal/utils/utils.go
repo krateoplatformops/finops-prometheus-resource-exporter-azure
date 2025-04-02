@@ -2,6 +2,9 @@ package utils
 
 import (
 	"bytes"
+	"os"
+	"regexp"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
@@ -30,4 +33,32 @@ func GetClientSet() (*kubernetes.Clientset, error) {
  */
 func TrapBOM(file []byte) []byte {
 	return bytes.Trim(file, "\xef\xbb\xbf")
+}
+
+// replaceVariables replaces all variables in the format <variable> with their values
+// from the additionalVariables map or from environment variables if the variable name is uppercase
+func ReplaceVariables(text string, additionalVariables map[string]string) string {
+	regex, _ := regexp.Compile("<.*?>")
+	toReplaceRange := regex.FindStringIndex(text)
+
+	for toReplaceRange != nil {
+		// Extract variable name without the < > brackets
+		varName := text[toReplaceRange[0]+1 : toReplaceRange[1]-1]
+
+		// Get replacement value from additionalVariables
+		varToReplace := additionalVariables[varName]
+
+		// If the variable name is all uppercase, get value from environment
+		if varToReplace == strings.ToUpper(varToReplace) {
+			varToReplace = os.Getenv(varToReplace)
+		}
+
+		// Replace the variable in the text
+		text = strings.Replace(text, text[toReplaceRange[0]:toReplaceRange[1]], varToReplace, -1)
+
+		// Find next variable
+		toReplaceRange = regex.FindStringIndex(text)
+	}
+
+	return text
 }
