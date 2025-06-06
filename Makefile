@@ -8,3 +8,6 @@ build:
 container:
 	docker build -t $(REPO)finops-prometheus-resource-exporter-azure:$(VERSION) .
 	docker push $(REPO)finops-prometheus-resource-exporter-azure:$(VERSION)
+
+container-multi:
+	docker buildx build --tag $(REPO)finops-prometheus-resource-exporter-azure:$(VERSION) --push --platform linux/amd64,linux/arm64 .

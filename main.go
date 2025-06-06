@@ -25,7 +25,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	finopsdatatypes "github.com/krateoplatformops/finops-data-types/api/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type recordGaugeCombo struct {
@@ -71,7 +70,7 @@ func ParseConfigFile(file string) (finopsdatatypes.ExporterScraperConfig, *httpc
 	return parse, endpoint, nil
 }
 
-func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint, fileName string) {
+func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint) []byte {
 	log.Logger.Info().Msgf("Request URL: %s", endpoint.ServerURL)
 
 	res := &http.Response{StatusCode: 500}
@@ -118,18 +117,12 @@ func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 		log.Debug().Msgf("body: %s", data)
 	}
 
-	err = os.WriteFile(fmt.Sprintf("/temp/%s.dat", fileName), utils.TrapBOM(data), 0644)
-	fatal(err)
-
+	return utils.TrapBOM(data)
 }
 
-func getRecordsFromFile(fileName string, config finopsdatatypes.ExporterScraperConfig) [][]string {
-
-	byteData, err := os.ReadFile(fmt.Sprintf("/temp/%s.dat", fileName))
-	fatal(err)
-
+func getRecordsFromFile(byteData []byte, config finopsdatatypes.ExporterScraperConfig) [][]string {
 	data := configmetrics.Metrics{}
-	err = json.Unmarshal(byteData, &data)
+	err := json.Unmarshal(byteData, &data)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("error decoding response")
 		if e, ok := err.(*json.SyntaxError); ok {
@@ -158,18 +151,11 @@ func getRecordsFromFile(fileName string, config finopsdatatypes.ExporterScraperC
 	return records
 }
 
-func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint, useConfig bool, registry *prometheus.Registry, prometheusMetrics map[string]recordGaugeCombo) {
+func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint, registry *prometheus.Registry, prometheusMetrics map[string]recordGaugeCombo) {
 	for {
-		fileName := ""
-		if config.Spec.ExporterConfig.Provider.Name != "" {
-			fileName = config.Spec.ExporterConfig.Provider.Name
-		} else {
-			fileName = "download"
-		}
-		if useConfig {
-			makeAPIRequest(config, endpoint, fileName)
-		}
-		records := getRecordsFromFile(fileName, config)
+
+		data := makeAPIRequest(config, endpoint)
+		records := getRecordsFromFile(data, config)
 
 		notFound := true
 		log.Info().Msgf("Analyzing %d records...", len(records))
@@ -212,18 +198,13 @@ func main() {
 	var err error
 	config := finopsdatatypes.ExporterScraperConfig{}
 	endpoint := &httpcall.Endpoint{}
-	useConfig := true
 	if len(os.Args) <= 1 {
 		config, endpoint, err = ParseConfigFile("/config/config.yaml")
 		fatal(err)
-	} else {
-		useConfig = false
-		config.Spec.ExporterConfig.Provider.Name = os.Args[1]
-		config.Spec.ExporterConfig.PollingInterval = metav1.Duration{Duration: 1 * time.Hour}
 	}
 
 	registry := prometheus.NewRegistry()
-	go updatedMetrics(config, endpoint, useConfig, registry, map[string]recordGaugeCombo{})
+	go updatedMetrics(config, endpoint, registry, map[string]recordGaugeCombo{})
 
 	handler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 
