@@ -79,7 +79,7 @@ func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 	for ok := true; ok; ok = (err_call != nil || res.StatusCode != 200) {
 		httpClient, err := httpcall.HTTPClientForEndpoint(endpoint)
 		if err != nil {
-			fatal(err)
+			log.Logger.Warn().Err(err).Msg("error while creating HTTP client")
 		}
 
 		res, err_call = httpcall.Do(context.TODO(), httpClient, httpcall.Options{
@@ -87,10 +87,12 @@ func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 			Endpoint: endpoint,
 		})
 
-		if err == nil && res.StatusCode != 200 {
+		if err_call == nil && res.StatusCode != 200 {
 			log.Warn().Msgf("Received status code %d", res.StatusCode)
+			bodyData, _ := io.ReadAll(res.Body)
+			log.Warn().Msgf("Body %s", string(bodyData))
 		} else {
-			fatal(err)
+			log.Logger.Warn().Err(err_call).Msg("error occurred while making API call")
 		}
 		log.Logger.Warn().Msgf("Retrying connection in 5s...")
 		time.Sleep(5 * time.Second)
@@ -110,7 +112,9 @@ func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 	defer res.Body.Close()
 
 	data, err := io.ReadAll(res.Body)
-	fatal(err)
+	if err != nil {
+		log.Logger.Warn().Err(err).Msg("an error has occured while reading response body")
+	}
 
 	if res.StatusCode != 200 {
 		log.Warn().Msgf("Received status code %d", res.StatusCode)
@@ -129,7 +133,8 @@ func getRecordsFromFile(byteData []byte, config finopsdatatypes.ExporterScraperC
 			log.Logger.Error().Msgf("syntax error at byte offset %d", e.Offset)
 		}
 		log.Logger.Info().Msgf("response: %q", byteData)
-		fatal(err)
+		log.Logger.Error().Err(err).Msg("error while reading file")
+		return nil
 	}
 
 	stringCSV := "ResourceId,metricName,timestamp,average,unit\n"
@@ -146,14 +151,22 @@ func getRecordsFromFile(byteData []byte, config finopsdatatypes.ExporterScraperC
 	reader := csv.NewReader(strings.NewReader(stringCSV))
 
 	records, err := reader.ReadAll()
-	fatal(err)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error while reading file")
+		return nil
+	}
 
 	return records
 }
 
-func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint, registry *prometheus.Registry, prometheusMetrics map[string]recordGaugeCombo) {
+func updatedMetrics(registry *prometheus.Registry, prometheusMetrics map[string]recordGaugeCombo) {
 	for {
-
+		config, endpoint, err := ParseConfigFile("/config/config.yaml")
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("error while parsing configuration, trying again in 5s...")
+			time.Sleep(5 * time.Second)
+			continue
+		}
 		data := makeAPIRequest(config, endpoint)
 		records := getRecordsFromFile(data, config)
 
@@ -168,7 +181,10 @@ func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 			notFound = true
 			if _, ok := prometheusMetrics[strings.Join(record, " ")]; ok {
 				metricValue, err := strconv.ParseFloat(record[3], 64)
-				fatal(err)
+				if err != nil {
+					log.Logger.Warn().Err(err).Msgf("skipping this record for this iteration, error while parsing metric value: %s", record[3])
+					continue
+				}
 				prometheusMetrics[strings.Join(record, " ")].gauge.Set(metricValue)
 				notFound = false
 			}
@@ -183,7 +199,10 @@ func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 					ConstLabels: labels,
 				})
 				metricValue, err := strconv.ParseFloat(records[i][3], 64)
-				fatal(err)
+				if err != nil {
+					log.Logger.Warn().Err(err).Msgf("skipping this record for this iteration, error while parsing metric value: %s", records[i][3])
+					continue
+				}
 
 				newMetricsRow.Set(metricValue)
 				prometheusMetrics[strings.Join(record, " ")] = recordGaugeCombo{record: record, gauge: newMetricsRow}
@@ -195,25 +214,11 @@ func updatedMetrics(config finopsdatatypes.ExporterScraperConfig, endpoint *http
 }
 
 func main() {
-	var err error
-	config := finopsdatatypes.ExporterScraperConfig{}
-	endpoint := &httpcall.Endpoint{}
-	if len(os.Args) <= 1 {
-		config, endpoint, err = ParseConfigFile("/config/config.yaml")
-		fatal(err)
-	}
-
 	registry := prometheus.NewRegistry()
-	go updatedMetrics(config, endpoint, registry, map[string]recordGaugeCombo{})
+	go updatedMetrics(registry, map[string]recordGaugeCombo{})
 
 	handler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 
 	http.Handle("/metrics", handler)
 	http.ListenAndServe(":2112", nil)
-}
-
-func fatal(err error) {
-	if err != nil {
-		log.Logger.Warn().Err(err).Msg("an error has occured, continuing...")
-	}
 }
