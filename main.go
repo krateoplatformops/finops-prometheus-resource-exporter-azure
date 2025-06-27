@@ -71,8 +71,6 @@ func ParseConfigFile(file string) (finopsdatatypes.ExporterScraperConfig, *httpc
 }
 
 func makeAPIRequest(config finopsdatatypes.ExporterScraperConfig, endpoint *httpcall.Endpoint) []byte {
-	log.Logger.Info().Msgf("Request URL: %s", endpoint.ServerURL)
-
 	res := &http.Response{StatusCode: 500}
 	err_call := fmt.Errorf("")
 
@@ -195,7 +193,7 @@ func updatedMetrics(registry *prometheus.Registry, prometheusMetrics map[string]
 					labels[records[0][j]] = value
 				}
 				newMetricsRow := promauto.NewGauge(prometheus.GaugeOpts{
-					Name:        fmt.Sprintf("usage_%s_%d", strings.ReplaceAll(config.Spec.ExporterConfig.Provider.Name, "-", "_"), i),
+					Name:        strings.ReplaceAll(strings.ToLower(labels[records[0][1]]), " ", "_"),
 					ConstLabels: labels,
 				})
 				metricValue, err := strconv.ParseFloat(records[i][3], 64)
